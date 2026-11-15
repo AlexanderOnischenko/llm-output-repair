@@ -47,3 +47,18 @@ python -m pytest
 ```
 
 No PyPI release yet. No license has been selected; do not assume an open-source license.
+
+## Controlled JSON interface
+
+```python
+from llm_output_repair import parse_json
+result = parse_json('{"name": "Бухгалтер"}}', policy="safe")
+assert result.value == {"name": "Бухгалтер"}
+```
+
+The controlled API owns strict decoding, recovery selection and verification.
+SAFE accepts only a supported class of syntax repairs; it rejects multiple
+structured values, duplicate keys and unverified content changes. TOLERANT
+retains the legacy extractor's heuristics. Existing extraction APIs are unchanged.
+SAFE is currently JSON-object-only; no claim of semantic equivalence for arbitrary
+malformed inputs or hard wall-clock limits. Applications own domain validation.

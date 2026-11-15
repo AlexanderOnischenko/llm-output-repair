@@ -14,3 +14,5 @@ def repair_json(raw: str) -> Any:
 def repair_yaml(raw: str) -> Any:
     """Return the parsed value using the inherited tolerant YAML extractor."""
     return extract_yaml_new(raw)
+
+from .controlled_json import parse_json as parse_json, JsonResult as JsonResult
