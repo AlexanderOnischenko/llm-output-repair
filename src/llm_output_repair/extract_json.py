@@ -7,6 +7,16 @@ import codecs
 from textwrap import dedent
 from typing import Any, Optional, List, Tuple, cast
 
+def _decode_transport_escapes(text: str) -> str:
+    """Preserve existing Unicode codepoints while decoding one escape layer.
+
+    unicode_escape consumes bytes, not UTF-8 text. Encode non-ASCII as
+    explicit Unicode escapes before decoding, so the codec cannot interpret
+    their UTF-8 bytes as Latin-1. Existing ASCII escape behavior is retained.
+    This remains a tolerant transport heuristic, not a SAFE authorization.
+    """
+    return codecs.decode(text.encode("ascii", "backslashreplace"), "unicode_escape")
+
 # ------------------------------------------------------------
 # Fences / блоки
 # ------------------------------------------------------------
@@ -868,7 +878,7 @@ def _iter_unicode_unescape_and_try_parse(s: str, max_rounds: int = 3) -> tuple[d
 
         # снимаем слой unicode_escape
         try:
-            t_dec = codecs.decode(t, 'unicode_escape')
+            t_dec = _decode_transport_escapes(t)
         except Exception:
             break
 
@@ -1006,7 +1016,7 @@ def unquote_json_seed(raw: str, max_rounds: int = 4) -> str:
             # если внутри видно unicode-эскейпы — снимем РОВНО один слой и вернём блок
             if _needs_more_unicode_decode(block):
                 try:
-                    dec = codecs.decode(block, 'unicode_escape')
+                    dec = _decode_transport_escapes(block)
                 except Exception:
                     dec = block
                 # Не применяем _escape_control_chars_inside_strings здесь, т.к. это
@@ -1031,7 +1041,7 @@ def unquote_json_seed(raw: str, max_rounds: int = 4) -> str:
         # 3) если видим глобальные unicode-эскейпы — снимем ОДИН слой и повторим цикл
         if _needs_more_unicode_decode(t):
             try:
-                t = codecs.decode(t, 'unicode_escape')
+                t = _decode_transport_escapes(t)
             except Exception:
                 pass
             continue
