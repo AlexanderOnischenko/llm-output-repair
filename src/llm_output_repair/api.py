@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import yaml
 
+from .crash_logger import CrashLogger, capture_failure
 from .controlled_json import parse_json
 from .extract_json import extract_json_new
 from .extract_yaml import extract_yaml_new
@@ -23,46 +24,65 @@ def _require_text(raw: str) -> None:
         raise TypeError("LLM output must be a string")
 
 
-def repair_json(raw: str, *, policy: Policy = "tolerant") -> Any:
-    """Return a Python value from JSON-like model output.
+def repair_json(
+    raw: str, *, policy: Policy = "tolerant", crash_logger: CrashLogger | None = None
+) -> Any:
+    """Decode JSON-like model output, optionally recording terminal failures.
 
     The default is the original, potentially lossy extractor for backward
-    compatibility. Use policy="safe" to limit repairs to verified edits
-    (object documents only), or policy="strict" to disable repair.
-    SAFE enforces a size limit; the legacy tolerant path does not.
+    compatibility. SAFE supports verified edits (object roots only).
+    No dump is saved unless a CrashLogger is explicitly supplied.
     """
     _require_text(raw)
     if policy not in ("strict", "safe", "tolerant"):
         raise ValueError("Unknown JSON repair policy")
-    if policy == "tolerant":
-        return json.loads(extract_json_new(raw))
-    expected_type = dict if policy == "safe" else object
-    return parse_json(raw, policy=policy, expected_type=expected_type).value
+    try:
+        if policy == "tolerant":
+            return json.loads(extract_json_new(raw))
+        expected_type = dict if policy == "safe" else object
+        # Capture here, not in the nested parse_json call: one dump per failure.
+        return parse_json(raw, policy=policy, expected_type=expected_type).value
+    except Exception as error:
+        capture_failure(crash_logger, raw, format="json", policy=policy, error=error)
+        raise
 
 
-def repair_yaml(raw: str, *, policy: Literal["strict", "tolerant"] = "tolerant") -> Any:
-    """Return a Python value from YAML-like model output.
+def repair_yaml(
+    raw: str, *, policy: Literal["strict", "tolerant"] = "tolerant",
+    crash_logger: CrashLogger | None = None,
+) -> Any:
+    """Decode YAML-like model output, optionally recording terminal failures.
 
-    'strict' parses using PyYAML without attempting repairs. 'tolerant'
-    retains the existing heuristic YAML normalization. There is no SAFE
-    YAML recovery policy: repaired YAML may change its meaning.
+    'strict' uses PyYAML without repair. 'tolerant' retains the inherited
+    normalization engine. No SAFE YAML recovery policy exists.
     """
     _require_text(raw)
-    if policy == "strict":
-        return yaml.safe_load(raw)
-    if policy == "tolerant":
+    if policy not in ("strict", "tolerant"):
+        raise ValueError("YAML supports only 'strict' or 'tolerant' policies")
+    try:
+        if policy == "strict":
+            return yaml.safe_load(raw)
         return extract_yaml_new(raw)
-    raise ValueError("YAML supports only 'strict' or 'tolerant' policies")
+    except Exception as error:
+        capture_failure(crash_logger, raw, format="yaml", policy=policy, error=error)
+        raise
 
 
-def repair(raw: str, *, format: Format = "json", policy: Policy | None = None) -> Any:
-    """Repair and decode structured output without selecting an extractor.
+def repair(
+    raw: str, *, format: Format = "json", policy: Policy | None = None,
+    crash_logger: CrashLogger | None = None,
+) -> Any:
+    """Repair structured output; optionally save unrecoverable inputs locally.
 
-    JSON defaults to SAFE (object-only); YAML defaults to TOLERANT.
-    Select policy explicitly when different behavior is required.
+    JSON defaults to SAFE, YAML defaults to TOLERANT. Successful recoveries
+    are not considered crashes and do not produce dumps.
     """
     if format == "json":
-        return repair_json(raw, policy="safe" if policy is None else policy)
+        return repair_json(
+            raw, policy="safe" if policy is None else policy, crash_logger=crash_logger
+        )
     if format == "yaml":
-        return repair_yaml(raw, policy="tolerant" if policy is None else policy)
+        return repair_yaml(
+            raw, policy="tolerant" if policy is None else policy, crash_logger=crash_logger
+        )
     raise ValueError("Unsupported format; expected 'json' or 'yaml'")

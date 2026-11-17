@@ -44,3 +44,16 @@ a decoded object, and `extract_yaml_new` returns a decoded Python value.
 
 Future changes should include regression tests for both layers. Only promote
 heuristics into SAFE when their accepted edits can be checked independently.
+
+## Optional crash capture
+
+`crash_logger.py` provides an explicit, caller-instantiated `CrashLogger`.
+No global logger, default path, background task, anonymizer or upload service
+exists. The public facade and `controlled_json.parse_json` record only
+unrecoverable failures, and do so only when a logger is passed.
+Nested facade calls never double-record a single failure.
+
+Crash dumps are versioned JSON documents suitable as a future source for
+local regression tests. The replay contract should reject truncated dumps and
+must validate expected outcomes separately from the raw payload. Uploading
+or publishing dumps needs independent user review and explicit consent.

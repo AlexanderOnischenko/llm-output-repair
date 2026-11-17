@@ -81,6 +81,47 @@ print(result.strategy)  # "safe"
 `parse_json` returns `JsonResult(value, repaired, strategy)`. Optional
 `on_rejected` is a callback for *sanitized errors*, not raw model output.
 
+## Optional crash capture
+
+**Disabled by default.** The library does not choose a directory, create
+`.crash_dumps` or persist a model response unless you explicitly instantiate
+a `CrashLogger` and pass it to a parser.
+
+```python
+from llm_output_repair import CrashLogger, repair
+
+crashes = CrashLogger("./private/parser-crashes")  # your own directory
+
+try:
+    result = repair('{"a":1} {"a":2}', crash_logger=crashes)
+except ValueError:
+    pass  # a local JSON dump was written before the original error was raised
+```
+
+`crash_logger=` is supported by `repair()`, `repair_json()`, `repair_yaml()`
+and `parse_json()`. No additional dependencies, environment variables,
+global singleton or background service are needed. Only **terminal parsing
+failures** are saved; a failed initial attempt that ultimately recovers does
+not produce a crash dump. The original parsing exception is always re-raised.
+An inability to save a dump produces a sanitized warning without hiding it.
+
+Each file contains `schema_version`, UTC timestamp, format, policy,
+error class, the **raw LLM output**, original input length, SHA-256 fingerprint
+and a `truncated` flag. The default `max_chars=1_000_000` limits the captured
+raw payload; truncated dumps cannot be faithfully replayed. Example:
+
+```python
+crashes = CrashLogger("/path/only/you/choose", max_chars=100_000)
+```
+
+**Privacy:** raw outputs may include API keys, personal data, confidential
+documents and prompt content. CrashLogger **does not anonymize, redact or
+upload** anything. Newly created directories and files have restrictive
+permissions on POSIX (0700 and 0600); permissions of a pre-existing directory
+are not modified. Protect this directory, add it to your application's
+`.gitignore`, and review dumps before sharing them. There is deliberately no
+GitHub uploader or public dataset integration.
+
 ## Safety and scope
 
 This is a **repair library, not a validator, sandbox or security boundary**.
@@ -95,7 +136,7 @@ This is a **repair library, not a validator, sandbox or security boundary**.
   resource limits. Do not use it with untrusted/unbounded input without your own limits.
 - YAML does not have an equivalent SAFE repair contract. PyYAML `safe_load`
   avoids constructing arbitrary Python objects, but is **not a size/CPU limit**.
-- No crash dumps, model responses or secrets are collected or uploaded by this library.
+- No dumps are captured without an explicitly provided CrashLogger; even then, nothing is uploaded.
 
 ## Architecture
 
