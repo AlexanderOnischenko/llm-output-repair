@@ -238,7 +238,25 @@ class JsonResult:
     strategy: str
 
 def parse_json(raw: str, *, policy: str = "safe", expected_type: type = dict,
-               on_rejected=None) -> JsonResult:
+               on_rejected=None, crash_logger=None) -> JsonResult:
+    """Parse JSON and optionally record terminal failures in a caller-owned folder.
+
+    Crash recording is opt-in. Passing no CrashLogger performs no I/O.
+    Intermediate parse attempts that later recover are not recorded.
+    """
+    try:
+        return _parse_json_impl(
+            raw, policy=policy, expected_type=expected_type,
+            on_rejected=on_rejected,
+        )
+    except Exception as error:
+        from .crash_logger import capture_failure
+        capture_failure(crash_logger, raw, format="json", policy=policy, error=error)
+        raise
+
+
+def _parse_json_impl(raw: str, *, policy: str = "safe", expected_type: type = dict,
+                     on_rejected=None) -> JsonResult:
     """Strict first; SAFE checks admissible edits; TOLERANT uses legacy extraction.
 
     SAFE currently supports object documents only. It rejects ambiguous or

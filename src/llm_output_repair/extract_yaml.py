@@ -8,7 +8,10 @@ from uuid import UUID
 from io import StringIO
 from dataclasses import is_dataclass, asdict
 from typing import List, Any, Mapping, Iterable, Optional
-from pydantic import BaseModel
+try:
+    from pydantic import BaseModel
+except ImportError:  # Optional: only needed to serialize Pydantic models in dump_yaml.
+    BaseModel = None
 import logging
 logger = logging.getLogger(__name__)
 
