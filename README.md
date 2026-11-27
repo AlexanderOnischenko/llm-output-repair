@@ -62,3 +62,53 @@ structured values, duplicate keys and unverified content changes. TOLERANT
 retains the legacy extractor's heuristics. Existing extraction APIs are unchanged.
 SAFE is currently JSON-object-only; no claim of semantic equivalence for arbitrary
 malformed inputs or hard wall-clock limits. Applications own domain validation.
+
+## Opt-in local crash dumps (P0)
+
+Crash capture is **disabled by default**: importing the package or calling a
+parser without a recorder creates no dump directory, performs no upload, and
+sends no telemetry.
+
+To retain *final* failures of the public parsing functions, explicitly supply a
+private directory and a recorder:
+
+~~~python
+from llm_output_repair import CrashRecorder, parse_json, repair_json, repair_yaml
+
+recorder = CrashRecorder(
+    directory="/private/path/llm-repair-dumps",
+    capture="failed",
+    source={"project": "fetchgraph"},
+    max_dump_bytes=1_000_000,
+    max_total_bytes=100_000_000,
+)
+
+# The same recorder can be reused across calls and workers.
+result = parse_json(raw_llm_output, policy="safe", recorder=recorder)
+# Also available: repair_json(raw, recorder=recorder)
+#                 repair_yaml(raw, recorder=recorder)
+~~~
+
+If the call fails after repair attempts, one JSON dump is saved with
+`schema_version=1`, the *exact original input*, operation and parse options,
+library version, UTC timestamp, exception **type** (not exception text or
+traceback) and optional caller-supplied `source` labels.
+Repeated identical inputs/operations/options are deduplicated. Storage is
+local-only; there is no automatic publishing, upload, anonymization, replay
+CLI or generated regression test yet (later phases).
+
+**Security:** The raw LLM output may contain secrets or personal information.
+Use a location *outside Git*, keep it under your control, and never upload
+unreviewed dumps. New directories are created with private permissions
+(`0700` on POSIX), files with `0600`. An existing directory with
+group/other permissions or a symlink is rejected. Add the directory to your
+application's `.gitignore` if inside a repository.
+
+Quota exhaustion, invalid dump serialization or a filesystem failure skips
+capture without changing the parser result or exception. Oversized inputs
+are **not truncated** into misleading replay fixtures. The existing
+`on_rejected` callback retains its behavior and may run on intermediate
+rejections even when the final parse succeeds; the recorder saves only final
+errors. Direct calls to legacy `extract_json_new` /
+`extract_yaml_new` are not instrumented; use the public repair
+wrappers above.
