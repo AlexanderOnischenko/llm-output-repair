@@ -112,3 +112,52 @@ rejections even when the final parse succeeds; the recorder saves only final
 errors. Direct calls to legacy `extract_json_new` /
 `extract_yaml_new` are not instrumented; use the public repair
 wrappers above.
+
+## Local regression workflow (P2)
+
+A crash dump records an observed failure, *not* expected behavior. Promote it
+to a regression fixture only after reviewing and explicitly supplying an
+expectation. These commands are local-only and never invoke an LLM.
+
+~~~bash
+# Reproduce the exact saved parser call.
+llm-repair replay /private/dumps/<sha256>.json
+
+# Prepare the expected JSON result separately from the failed output.
+printf '%s\n' '{"a":1}' > /private/expected.json
+
+# Create an actionable failing case.
+llm-repair promote /private/dumps/<sha256>.json \
+  --corpus ./tests/regression_corpus \
+  --bucket known_bad \
+  --expect-json-file /private/expected.json
+
+# Or specify an intentional rejection:
+llm-repair promote /private/dumps/<sha256>.json \
+  --corpus ./tests/regression_corpus \
+  --bucket fixed \
+  --expect-error ValueError
+
+# Verify checked corpus cases. Unresolved known_bad returns exit code 1.
+llm-repair verify --corpus ./tests/regression_corpus --bucket known_bad
+llm-repair verify --corpus ./tests/regression_corpus --bucket fixed
+~~~
+
+Fixtures are data-only JSON files stored at
+`<corpus>/known_bad/*.json` and `<corpus>/fixed/*.json`.
+The expected outcome is either the exact JSON value (`accepted`) or an
+exception type (`rejected`). The parser is executed locally:
+a case can only be marked `fixed` if it already matches its expectation,
+and only `known_bad` if it currently fails. Existing conflicting
+fixtures are never overwritten.
+
+One parameterized pytest regression runner picks up reviewed fixtures in
+`tests/regression_corpus/fixed` automatically. Known-bad failures
+do not fail normal CI. The CLI reports only outcome, case ID and fixture name,
+never raw model content, repaired output or exception messages. Verify returns
+nonzero for an empty selected corpus rather than declaring a false success.
+
+**Privacy:** No anonymization or uploading is implemented. Raw dumps and the
+promoted fixtures both contain exact original input; keep them outside public
+Git repos until deliberately reviewed. The CLI is not a sandbox for arbitrary
+adversarial parser inputs; run untrusted fixtures with resource limits.
