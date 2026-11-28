@@ -14,7 +14,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from .crash_recorder import SCHEMA_VERSION, _ALLOWED_OPERATIONS
 
@@ -105,14 +105,37 @@ def _validate_expected(expected: Any) -> None:
         raise ValueError("Expected status must be accepted or rejected")
 
 
-def load_case(path: str | Path) -> dict[str, Any]:
-    """Read a bounded JSON dump or fixture. Never execute input as code."""
+def _read_case_bytes(path: str | Path) -> bytes:
     p = Path(path)
     if p.is_symlink() or not p.is_file():
         raise ValueError("Case must be a regular non-symlink JSON file")
     if p.stat().st_size > MAX_CASE_BYTES:
         raise ValueError("Case file exceeds replay size limit")
-    obj = _decode_json(p.read_text(encoding="utf-8"))
+    with p.open("rb") as stream:
+        data = stream.read(MAX_CASE_BYTES + 1)
+    if len(data) > MAX_CASE_BYTES:
+        raise ValueError("Case file exceeds replay size limit")
+    return data
+
+
+def load_case(
+    path: str | Path, *, expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Read a bounded JSON dump or fixture, optionally requiring exact bytes."""
+    data = _read_case_bytes(path)
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("Fixture bytes changed")
+    return _decode_case(data)
+
+
+def load_case_with_digest(path: str | Path) -> tuple[dict[str, Any], str]:
+    """Validate a case and return the SHA-256 of the same bytes."""
+    data = _read_case_bytes(path)
+    return _decode_case(data), hashlib.sha256(data).hexdigest()
+
+
+def _decode_case(data: bytes) -> dict[str, Any]:
+    obj = _decode_json(data.decode("utf-8"))
     if not isinstance(obj, dict):
         raise ValueError("Case must be a JSON object")
     _validate_input(obj)
@@ -195,6 +218,33 @@ def fixture_paths(corpus: str | Path, bucket: str = "fixed") -> Iterator[Path]:
         if not directory.is_dir():
             raise ValueError("Fixture bucket is not a directory")
         yield from sorted(directory.glob("*.json"))
+
+
+def verify_fixtures(
+    paths: Iterable[Path],
+    *,
+    expected_hashes: Mapping[str, str] | None = None,
+    report_case: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, int]:
+    """Verify explicit fixtures and count successfully loaded, checked files."""
+    total = files_read = passed = 0
+    for path in paths:
+        total += 1
+        case_id = path.stem
+        matched = False
+        try:
+            digest = expected_hashes[path.name] if expected_hashes is not None else None
+            case = load_case(path, expected_sha256=digest)
+            files_read += 1
+            case_id = case_digest(case)
+            matched = matches_expected(case, replay_case(case))
+        except Exception:
+            # Keep input and exception details out of verification reports.
+            pass
+        passed += matched
+        if report_case is not None:
+            report_case({"case_id": case_id, "matches_expected": matched, "fixture": path.name})
+    return {"total": total, "passed": passed, "failed": total - passed, "files_read": files_read}
 
 
 def promote_dump(

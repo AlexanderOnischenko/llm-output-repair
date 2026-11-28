@@ -10,7 +10,7 @@ from typing import Sequence
 
 from .regression import (
     _decode_json, case_digest, fixture_paths, load_case,
-    matches_expected, promote_dump, replay_case,
+    matches_expected, promote_dump, replay_case, verify_fixtures,
 )
 
 
@@ -87,26 +87,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             }, sort_keys=True))
             return 0
 
-        failures = 0
-        total = 0
-        for path in fixture_paths(args.corpus, bucket=args.bucket):
-            total += 1
-            try:
-                case = load_case(path)
-                matched = matches_expected(case, replay_case(case))
-                case_id = case_digest(case)
-            except Exception:
-                matched = False
-                case_id = path.stem  # Never print file content or exception messages.
-            if not matched:
-                failures += 1
-            print(json.dumps({
-                "case_id": case_id, "matches_expected": matched,
-                "fixture": path.name,
-            }, sort_keys=True))
-        print(json.dumps({"total": total, "passed": total - failures, "failed": failures}))
+        summary = verify_fixtures(
+            fixture_paths(args.corpus, bucket=args.bucket),
+            report_case=lambda case: print(json.dumps(case, sort_keys=True)),
+        )
+        summary.pop("files_read")
+        print(json.dumps(summary))
         # Empty corpus must not silently pass as a verification result.
-        return 0 if total and not failures else 1
+        return 0 if summary["total"] and not summary["failed"] else 1
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
         # Exception messages, including JSON decoder snippets and raw filenames,
         # are omitted to avoid leaking model output into logs.

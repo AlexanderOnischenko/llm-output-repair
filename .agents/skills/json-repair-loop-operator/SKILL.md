@@ -29,6 +29,25 @@ existing parser test harness.
   stop at first accepted result or shared trial budget. Keep ordinary Codex
   as a comparable control arm, not an assumed inferior alternative.
 
+## Reuse verified evidence
+
+Before scheduling a check, compare its request with the original Executor
+receipt. Reuse only a confirmed passing result with the same code tree SHA,
+corpus fingerprint (or explicit corpus-free workload), environment digest and
+verification command. Include command arguments, target, configuration and
+relevant host revisions in the recorded inputs. Confirm that the receipt
+covers the current gate. Missing fields, an unconfirmed receipt or a changed
+input require a new native check and leave the gate pending.
+
+For a commit created after verification, check its tree against the assessed
+tree with `git rev-parse '<commit>^{tree}'`. Record the accepted commit and
+link the original receipt without modifying it. Run again if the command
+depends on commit identity or the gate specifically requires fresh execution
+on that commit. Independent Assessor authority stays in force.
+
+Record which checks were executed or reused and why in the
+[runbook](../../../experiments/loop_engineer/README.md#verify-and-record-evidence).
+
 Authority: one isolated candidate branch only; no changes to the corpus,
 assessor, workflow contract, production branches, Fetchgraph runtime or
 external services. Default provisional trial budget: one defect family,

@@ -9,9 +9,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +22,15 @@ from llm_output_repair.regression import (
     case_digest,
     fixture_paths,
     load_case,
+    load_case_with_digest,
     matches_expected,
     replay_case,
+    verify_fixtures,
 )
 
 SCHEMA = "llm-repair-loop/v1"
+PRIVATE_V2_COUNT = 19
+PRIVATE_V2_FINGERPRINT = "37fca2ac2d3b93e304dc722e98fae496372d8fecae61d33f98ae474881ac874f"
 
 
 def _canonical(data: Any) -> bytes:
@@ -67,9 +73,7 @@ def inventory(corpus: Path) -> list[dict[str, str]]:
     seen_ids: set[str] = set()
     for bucket in ("known_bad", "fixed"):
         for path in fixture_paths(corpus, bucket=bucket):
-            if path.is_symlink() or not path.is_file():
-                raise ValueError("Fixture must be a regular file, not a symlink")
-            case = load_case(path)
+            case, fixture_sha = load_case_with_digest(path)
             if case.get("kind") != "regression_fixture" or "expected" not in case:
                 raise ValueError("Unqualified crash dump is not a regression fixture")
             digest = case_digest(case)
@@ -80,11 +84,45 @@ def inventory(corpus: Path) -> list[dict[str, str]]:
                 "bucket": bucket,
                 "filename": path.name,
                 "case_id": digest,
-                "sha256": _hash(path.read_bytes()),
+                "sha256": fixture_sha,
                 "expected": case["expected"]["status"],
             })
     entries.sort(key=lambda value: (value["bucket"], value["filename"]))
     return entries
+
+
+def _fingerprint(cases: list[dict[str, str]]) -> str:
+    return _hash(_canonical({"schema": SCHEMA, "cases": cases}))
+
+
+def verify_private_v2(corpus: Path) -> dict[str, Any]:
+    """Run the native verification runner against the pinned private fixed corpus."""
+    entries = inventory(corpus)
+    fingerprint = _fingerprint(entries)
+    report = {
+        "status": "FAIL", "fingerprint": fingerprint, "expected_count": PRIVATE_V2_COUNT,
+        "total": len(entries), "files_read": 0, "passed": 0, "failed": 0,
+    }
+    if len(entries) != PRIVATE_V2_COUNT or any(e["bucket"] != "fixed" for e in entries):
+        return {**report, "reason": "wrong_fixed_cohort"}
+    if fingerprint != PRIVATE_V2_FINGERPRINT:
+        return {**report, "reason": "fingerprint_mismatch"}
+
+    hashes = {entry["filename"]: entry["sha256"] for entry in entries}
+    paths = [corpus / "fixed" / filename for filename in hashes]
+    old_disable = logging.root.manager.disable
+    logging.disable(sys.maxsize)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            report.update(verify_fixtures(paths, expected_hashes=hashes))
+    finally:
+        logging.disable(old_disable)
+    if report["files_read"] == report["passed"] == PRIVATE_V2_COUNT:
+        report["status"] = "PASS"
+    else:
+        report["reason"] = "verification_failed"
+    return report
 
 
 def snapshot(corpus: Path) -> dict[str, Any]:
@@ -100,7 +138,7 @@ def snapshot(corpus: Path) -> dict[str, Any]:
             "Need >=1 reviewed known_bad, >=1 fixed, and >=1 fixed rejection guardrail"
         )
     manifest = {"schema": SCHEMA, "cases": cases}
-    return {**manifest, "fingerprint": _hash(_canonical(manifest))}
+    return {**manifest, "fingerprint": _fingerprint(cases)}
 
 
 def _git_sha() -> str:
@@ -125,7 +163,7 @@ def evaluate(corpus: Path, manifest: dict[str, Any], arm: str) -> dict[str, Any]
     for entry in manifest["cases"]:
         # The input is a reviewed fixture, never an executable file.
         path = corpus / entry["bucket"] / entry["filename"]
-        case = load_case(path)
+        case = load_case(path, expected_sha256=entry["sha256"])
         case_started = time.perf_counter()
         observed = replay_case(case)
         matched = matches_expected(case, observed)
@@ -242,8 +280,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--baseline", type=Path, required=True)
     p.add_argument("--candidate", type=Path, required=True)
     p.add_argument("--out", type=Path, required=True)
+    p = sub.add_parser("verify-private-v2", help="Require and verify all private v2 fixed fixtures")
+    p.add_argument("--corpus", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == "verify-private-v2":
+            report = verify_private_v2(args.corpus)
+            print(json.dumps(report, sort_keys=True))
+            return 0 if report["status"] == "PASS" else 1
         if args.command == "snapshot":
             record = snapshot(args.corpus)
         elif args.command == "run":
@@ -268,7 +312,11 @@ def main(argv: list[str] | None = None) -> int:
         }, sort_keys=True))
         return 0 if record["eligible_first_success"] else 1
     except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
-        print(f"experiment: {type(exc).__name__}; no evidence written", file=sys.stderr)
+        if args.command == "verify-private-v2":
+            print(json.dumps({"status": "FAIL", "reason": "invalid_corpus",
+                              "expected_count": PRIVATE_V2_COUNT, "files_read": 0}))
+        else:
+            print(f"experiment: {type(exc).__name__}; no evidence written", file=sys.stderr)
         return 2
 
 

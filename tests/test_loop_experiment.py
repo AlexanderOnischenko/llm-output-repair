@@ -123,3 +123,90 @@ def test_comparison_refuses_different_oracles(tmp_path):
     after["corpus_fingerprint"] = "changed"
     with pytest.raises(ValueError, match="Incomparable"):
         experiment.compare(before, after)
+
+
+@pytest.fixture
+def private_profile(tmp_path, monkeypatch):
+    corpus = tmp_path / "private"
+    positive = _fixture(
+        corpus, "fixed", '{"marker":"PRIVATE_TEST_VALUE"}',
+        {"status": "accepted", "value": {"marker": "PRIVATE_TEST_VALUE"}}, "positive"
+    )
+    _fixture(
+        corpus, "fixed", '{"a":1,}',
+        {"status": "rejected", "exception_type": "JSONDecodeError"}, "negative"
+    )
+    fingerprint = experiment._fingerprint(experiment.inventory(corpus))
+    monkeypatch.setattr(experiment, "PRIVATE_V2_COUNT", 2)
+    monkeypatch.setattr(experiment, "PRIVATE_V2_FINGERPRINT", fingerprint)
+    return corpus, positive, fingerprint
+
+
+def test_private_profile_checks_and_counts_pinned_files(private_profile, capsys):
+    corpus, _, fingerprint = private_profile
+    assert experiment.main(["verify-private-v2", "--corpus", str(corpus)]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "status": "PASS", "fingerprint": fingerprint, "expected_count": 2,
+        "files_read": 2, "total": 2, "passed": 2, "failed": 0,
+    }
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(("failure", "reason"), [
+    ("missing_dir", "invalid_corpus"),
+    ("missing_fixture", "wrong_fixed_cohort"),
+    ("changed_fixture", "fingerprint_mismatch"),
+])
+def test_private_profile_fails_closed(private_profile, capsys, failure, reason):
+    corpus, positive, _ = private_profile
+    if failure == "missing_dir":
+        corpus = corpus / "absent"
+    elif failure == "missing_fixture":
+        positive.unlink()
+    else:
+        positive.write_bytes(positive.read_bytes() + b" ")
+    assert experiment.main(["verify-private-v2", "--corpus", str(corpus)]) != 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["status"], report["reason"], report["files_read"]) == ("FAIL", reason, 0)
+
+
+def test_private_profile_refuses_bytes_changed_after_inventory(private_profile, monkeypatch):
+    corpus, positive, _ = private_profile
+    verify = experiment.verify_fixtures
+
+    def change_then_verify(*args, **kwargs):
+        positive.write_bytes(positive.read_bytes() + b" ")
+        return verify(*args, **kwargs)
+
+    monkeypatch.setattr(experiment, "verify_fixtures", change_then_verify)
+    report = experiment.verify_private_v2(corpus)
+    assert (report["status"], report["files_read"], report["passed"], report["failed"]) == (
+        "FAIL", 1, 1, 1
+    )
+
+
+def test_private_profile_failure_keeps_values_out_of_diagnostics(
+    private_profile, monkeypatch, capsys, caplog
+):
+    import logging
+    import warnings
+
+    from llm_output_repair import regression
+
+    corpus, _, _ = private_profile
+
+    def broken_replay(case):
+        secret = case["input"]["raw"]
+        logging.getLogger(__name__).warning("%s", secret)
+        warnings.warn(secret, stacklevel=1)
+        raise ValueError(secret)
+
+    monkeypatch.setattr(regression, "replay_case", broken_replay)
+    assert experiment.main(["verify-private-v2", "--corpus", str(corpus)]) == 1
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    assert (report["reason"], report["files_read"], report["failed"]) == (
+        "verification_failed", 2, 2
+    )
+    assert "PRIVATE_TEST_VALUE" not in captured.out + captured.err + caplog.text
