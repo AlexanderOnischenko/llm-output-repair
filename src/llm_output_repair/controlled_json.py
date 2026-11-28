@@ -1,6 +1,7 @@
 """Controlled JSON recovery; no application or domain dependencies."""
 import json
 import logging
+import math
 import re
 from json_repair import repair_json
 from .crash_logger import CrashLogger, capture_failure
@@ -21,8 +22,17 @@ def _unique(pairs):
 def _constant(value):
     raise ValueError("Non-finite JSON constant")
 
-def _decode(text):
-    return json.loads(text, object_pairs_hook=_unique, parse_constant=_constant)
+def _decode(text, *, parse_float=float):
+    return json.loads(
+        text, object_pairs_hook=_unique, parse_constant=_constant, parse_float=parse_float,
+    )
+
+
+def _finite_float(token):
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError("Non-finite JSON number")
+    return value
 
 def _object_end(text):
     """Find the end of one complete outer object, respecting quoted strings."""
@@ -77,8 +87,30 @@ def _tokens(text):
             result.append(("syntax", token))
     return result
 
+_LABELED_JSON_FENCE = re.compile(
+    r"([^\W_]+(?:[ \t]+[^\W_]+)*):[ \t]*\r?\n[ \t]*```json[ \t]*\r?\n"
+    r"(.*)\r?\n[ \t]*```",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+
 def _conservative_parse(raw):
     text = raw.strip()
+    # A plain heading can be removed only when the fence encloses the
+    # entire strict object and nothing outside it could be another value.
+    envelope = _LABELED_JSON_FENCE.fullmatch(text)
+    if envelope:
+        heading, body = envelope.groups()
+        words = heading.split()
+        if all(word.isalpha() for word in words) and words[0].lower() not in {"true", "false", "null"}:
+            try:
+                value = _decode(body, parse_float=_finite_float)
+            except (ValueError, RecursionError):
+                pass
+            else:
+                if isinstance(value, dict):
+                    return value
+
     text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE)
     try:
         value = _decode(text)
