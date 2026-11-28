@@ -8,10 +8,24 @@ version = "0.1.0"
 description = "Deterministic extraction and heuristic repair of structured LLM output"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["PyYAML>=6,<7", "pydantic>=1,<3"]
+keywords = ["llm", "json", "yaml", "repair", "parser"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing",
+]
+dependencies = ["PyYAML>=6,<7", "pydantic>=1,<3", "json-repair==0.62.0"]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9"]
+pydantic = ["pydantic>=1,<3"]
+test = ["pytest>=8,<9", "pydantic>=1,<3"]
+
+[project.urls]
+Repository = "https://github.com/AlexanderOnischenko/llm-output-repair"
+Issues = "https://github.com/AlexanderOnischenko/llm-output-repair/issues"
 
 [project.scripts]
 llm-repair = "llm_output_repair.cli:main"

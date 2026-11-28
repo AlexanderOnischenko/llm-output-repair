@@ -14,6 +14,7 @@ class ProposalJsonTests(unittest.TestCase):
 
     def test_comma_repair(self):
         self.assertEqual(parse_proposal_json('{"a":1,"b":[2,3,],}'), {"a":1,"b":[2,3]})
+        self.assertEqual(parse_proposal_json('{,"a":1}'), {"a": 1})
         self.assertEqual(parse_proposal_json('{"a":1 "b":2}'), {"a":1,"b":2})
         self.assertEqual(
             parse_proposal_json('{"a":[{"b":"текст,]"} {"c":[true false,]},],}'),

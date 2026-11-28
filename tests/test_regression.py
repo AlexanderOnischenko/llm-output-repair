@@ -2,7 +2,8 @@
 import json
 from pathlib import Path
 import pytest
-from llm_output_repair import CrashRecorder, parse_json
+import yaml
+from llm_output_repair import CrashRecorder, parse_json, repair
 from llm_output_repair.cli import main
 from llm_output_repair.regression import (
     case_digest, fixture_paths, load_case, matches_expected,
@@ -97,6 +98,24 @@ def test_reject_unknown_operation_and_duplicate_keys(tmp_path):
 def test_strict_replay(tmp_path):
     case = load_case(make_dump(tmp_path, policy="strict"))
     assert replay_case(case).exception_type == "JSONDecodeError"
+
+
+@pytest.mark.parametrize(("format", "raw", "error"), [
+    ("json", '{"a":1,}', json.JSONDecodeError),
+    ("yaml", "items: [one\n", yaml.YAMLError),
+])
+def test_facade_records_replayable_strict_failures(tmp_path, format, raw, error):
+    recorder = CrashRecorder(tmp_path / "dumps")
+    with pytest.raises(error) as raised:
+        repair(raw, format=format, policy="strict", recorder=recorder)
+
+    [dump] = recorder.directory.glob("*.json")
+    case = load_case(dump)
+    assert case_digest(case) == dump.stem
+    assert replay_case(case) == Observation(
+        status="rejected", exception_type=type(raised.value).__name__
+    )
+
 
 def test_promote_missing_expected_file(tmp_path):
     dump = make_dump(tmp_path)

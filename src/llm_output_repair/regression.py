@@ -22,7 +22,7 @@ MAX_CASE_BYTES = 16_000_000
 _ALLOWED_POLICIES = frozenset(("strict", "safe", "tolerant"))
 _ROOT_TYPES: dict[str, type] = {
     "dict": dict, "list": list, "str": str, "int": int,
-    "float": float, "bool": bool, "NoneType": type(None),
+    "float": float, "bool": bool, "NoneType": type(None), "object": object,
 }
 _ERROR_NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]{0,127}\Z")
 _BUCKETS = ("known_bad", "fixed")
@@ -70,8 +70,11 @@ def _validate_input(case: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
             raise ValueError("Unknown policy in case")
         if options["expected_type"] not in _ROOT_TYPES:
             raise ValueError("Unknown expected_type in case")
+    elif operation == "repair_yaml":
+        if options not in ({}, {"policy": "strict"}):
+            raise ValueError("Unsupported options for repair_yaml")
     elif options:
-        raise ValueError("repair_json/repair_yaml do not accept options")
+        raise ValueError("repair_json does not accept options")
     return operation, data
 
 
@@ -157,7 +160,7 @@ def replay_case(case: Mapping[str, Any]) -> Observation:
         elif operation == "repair_json":
             value = repair_json(raw)
         else:
-            value = repair_yaml(raw)
+            value = repair_yaml(raw, policy=options.get("policy", "tolerant"))
     except Exception as exc:
         return Observation(status="rejected", exception_type=type(exc).__name__)
     return Observation(status="accepted", value=value)

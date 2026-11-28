@@ -2,6 +2,9 @@
 import json
 import logging
 import re
+from json_repair import repair_json
+from .crash_logger import CrashLogger, capture_failure
+from .crash_recorder import CrashRecorder, _capture_failure
 from .extract_json import extract_json_new, quote_unquoted_keys, escape_control_chars_inside_strings, remove_unmatched_brackets
 
 log = logging.getLogger(__name__)
@@ -74,33 +77,6 @@ def _tokens(text):
             result.append(("syntax", token))
     return result
 
-def _repair_commas(text):
-    """Insert missing separators and remove trailing commas outside strings."""
-    parts = []
-    previous = ""
-    pos = 0
-    previous_end = 0
-    for match in _TOKEN.finditer(text):
-        if match.start() != pos:
-            raise ValueError("Unsupported JSON repair token")
-        token = match.group()
-        pos = match.end()
-        if token.isspace():
-            continue
-        missing_separator = previous and previous[-1] not in "{[:," and token[0] not in "}]:,"
-        if missing_separator:
-            if match.start() == previous_end and previous[-1].isalnum() and token[0] in "-0123456789tfn":
-                raise ValueError("Adjacent unquoted values require whitespace")
-            parts.append(",")
-        if previous == "," and token in ("}", "]") and parts[-2] not in ("{", "[", ":", ","):
-            parts.pop()
-        parts.append(token)
-        previous = token
-        previous_end = pos
-    if pos != len(text):
-        raise ValueError("Unsupported JSON repair token")
-    return "".join(parts)
-
 def _conservative_parse(raw):
     text = raw.strip()
     text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE)
@@ -132,13 +108,13 @@ def _conservative_parse(raw):
             strategy = "complete_object"
         except json.JSONDecodeError:
             try:
-                repaired = _repair_commas(candidate)
+                repaired = repair_json(candidate, skip_json_loads=True, ensure_ascii=False)
                 if _tokens(candidate) != _tokens(repaired):
                     raise ValueError("JSON repair changed content tokens")
                 value = _decode(repaired)
             except (ValueError, TypeError, RecursionError):
                 raise ValueError("JSON repair rejected: not a conservative comma repair") from None
-            strategy = "comma_repair"
+            strategy = "json_repair"
         log.warning("Model JSON recovered strategy=%s error=%s chars=%s",
                     strategy, original.msg, len(text))
     if not isinstance(value, dict):
@@ -264,7 +240,36 @@ class JsonResult:
     strategy: str
 
 def parse_json(raw: str, *, policy: str = "safe", expected_type: type = dict,
-               on_rejected=None) -> JsonResult:
+               on_rejected=None, crash_logger: CrashLogger | None = None,
+               recorder: CrashRecorder | None = None) -> JsonResult:
+    """Parse JSON and optionally record terminal failures in a caller-owned folder.
+
+    Crash recording is opt-in through recorder or crash_logger.
+    Intermediate parse attempts that later recover are not recorded.
+    """
+    try:
+        return _parse_json_impl(
+            raw, policy=policy, expected_type=expected_type,
+            on_rejected=on_rejected,
+        )
+    except Exception as error:
+        if recorder is not None:
+            _capture_failure(
+                recorder,
+                operation="parse_json",
+                raw=raw,
+                error=error,
+                options={
+                    "policy": policy,
+                    "expected_type": getattr(expected_type, "__name__", type(expected_type).__name__),
+                },
+            )
+        capture_failure(crash_logger, raw, format="json", policy=policy, error=error)
+        raise
+
+
+def _parse_json_impl(raw: str, *, policy: str = "safe", expected_type: type = dict,
+                     on_rejected=None) -> JsonResult:
     """Strict first; SAFE checks admissible edits; TOLERANT uses legacy extraction.
 
     SAFE currently supports object documents only. It rejects ambiguous or
