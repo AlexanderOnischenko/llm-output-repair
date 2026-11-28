@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,6 +19,17 @@ from typing import Iterator, Mapping
 
 SCHEMA_VERSION = 1
 _ALLOWED_OPERATIONS = frozenset({"parse_json", "repair_json", "repair_yaml"})
+
+
+def _default_directory() -> Path:
+    home = Path.home()
+    if sys.platform == "darwin":
+        parent = home / "Library" / "Application Support"
+    elif sys.platform == "win32":
+        parent = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    else:
+        parent = home / ".local" / "state"
+    return parent / "LLM-output-repair" / "dumps"
 
 
 @contextmanager
@@ -60,7 +72,7 @@ class CrashRecorder:
 
     def __init__(
         self,
-        directory: str | os.PathLike[str],
+        directory: str | os.PathLike[str] | None = None,
         *,
         capture: str = "failed",
         max_dump_bytes: int = 1_000_000,
@@ -84,7 +96,7 @@ class CrashRecorder:
         ):
             raise ValueError("source must contain at most 16 bounded string pairs")
 
-        self.directory = Path(directory).expanduser()
+        self.directory = _default_directory() if directory is None else Path(directory).expanduser()
         self.max_dump_bytes = max_dump_bytes
         self.max_total_bytes = max_total_bytes
         self.source = dict(source or {})

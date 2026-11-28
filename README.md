@@ -65,6 +65,12 @@ malformed inputs or hard wall-clock limits. Applications own domain validation.
 
 ## Opt-in local crash dumps (P0)
 
+Explicitly constructing `CrashRecorder()` uses the shared per-user dump
+directory. On macOS it is
+`~/Library/Application Support/LLM-output-repair/dumps`. On Linux it is
+`~/.local/state/LLM-output-repair/dumps`, and on Windows it is
+`%LOCALAPPDATA%/LLM-output-repair/dumps`. Pass `directory` to override it.
+
 Crash capture is **disabled by default**: importing the package or calling a
 parser without a recorder creates no dump directory, performs no upload, and
 sends no telemetry.

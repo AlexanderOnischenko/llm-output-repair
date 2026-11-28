@@ -2,7 +2,6 @@
 import json
 import logging
 import re
-from json_repair import repair_json
 from .extract_json import extract_json_new, quote_unquoted_keys, escape_control_chars_inside_strings, remove_unmatched_brackets
 
 log = logging.getLogger(__name__)
@@ -75,6 +74,33 @@ def _tokens(text):
             result.append(("syntax", token))
     return result
 
+def _repair_commas(text):
+    """Insert missing separators and remove trailing commas outside strings."""
+    parts = []
+    previous = ""
+    pos = 0
+    previous_end = 0
+    for match in _TOKEN.finditer(text):
+        if match.start() != pos:
+            raise ValueError("Unsupported JSON repair token")
+        token = match.group()
+        pos = match.end()
+        if token.isspace():
+            continue
+        missing_separator = previous and previous[-1] not in "{[:," and token[0] not in "}]:,"
+        if missing_separator:
+            if match.start() == previous_end and previous[-1].isalnum() and token[0] in "-0123456789tfn":
+                raise ValueError("Adjacent unquoted values require whitespace")
+            parts.append(",")
+        if previous == "," and token in ("}", "]") and parts[-2] not in ("{", "[", ":", ","):
+            parts.pop()
+        parts.append(token)
+        previous = token
+        previous_end = pos
+    if pos != len(text):
+        raise ValueError("Unsupported JSON repair token")
+    return "".join(parts)
+
 def _conservative_parse(raw):
     text = raw.strip()
     text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text, flags=re.IGNORECASE)
@@ -106,13 +132,13 @@ def _conservative_parse(raw):
             strategy = "complete_object"
         except json.JSONDecodeError:
             try:
-                repaired = repair_json(candidate, skip_json_loads=True, ensure_ascii=False)
+                repaired = _repair_commas(candidate)
                 if _tokens(candidate) != _tokens(repaired):
                     raise ValueError("JSON repair changed content tokens")
                 value = _decode(repaired)
             except (ValueError, TypeError, RecursionError):
                 raise ValueError("JSON repair rejected: not a conservative comma repair") from None
-            strategy = "json_repair"
+            strategy = "comma_repair"
         log.warning("Model JSON recovered strategy=%s error=%s chars=%s",
                     strategy, original.msg, len(text))
     if not isinstance(value, dict):

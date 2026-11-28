@@ -15,12 +15,16 @@ class ProposalJsonTests(unittest.TestCase):
     def test_comma_repair(self):
         self.assertEqual(parse_proposal_json('{"a":1,"b":[2,3,],}'), {"a":1,"b":[2,3]})
         self.assertEqual(parse_proposal_json('{"a":1 "b":2}'), {"a":1,"b":2})
+        self.assertEqual(
+            parse_proposal_json('{"a":[{"b":"текст,]"} {"c":[true false,]},],}'),
+            {"a": [{"b": "текст,]"}, {"c": [True, False]}]},
+        )
 
     def test_reject_ambiguous_or_incomplete(self):
         for raw in ('{"a":1} {"a":2}', '{"a":1} trailing {"b":2}',
                     '{"a":1} [2]', '{"a":1} true', '{"a":1} 2',
                     '{"a":1', '{"a":}', '{"a":1,"a":2}',
-                    '{"a":1,"a":2,}', '{"a":NaN}', '[]', 'not JSON'):
+                    '{"a":1,"a":2,}', '{"a":NaN}', '{"a":[01]}', '[]', 'not JSON'):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 parse_proposal_json(raw)
 
