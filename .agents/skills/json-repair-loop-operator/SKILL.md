@@ -5,15 +5,15 @@ description: Run a bounded offline JSON repair improvement loop on an immutable 
 
 # JSON repair Loop Operator
 
-Read \`experiments/loop_engineer/README.md\` and the installed
-\`$loop-engineer\` skill. Do not create a new workflow engine or replace the
+Read `experiments/loop_engineer/README.md` and the installed
+`$loop-engineer` skill. Do not create a new workflow engine or replace the
 existing parser test harness.
 
 - **Goal:** first verified fix of one actual, independently qualified
-  Fetchgraph-originated \`llm-output-repair\` regression with no previously
+  Fetchgraph-originated `llm-output-repair` regression with no previously
   passing regression becoming red. Do not optimize throughput yet.
-- **Executor:** execute exact raw input with the library's \`llm-repair replay\`
-  or \`experiments/loop_engineer/evaluate.py\`. Never call an LLM to reproduce
+- **Executor:** execute exact raw input with the library's `llm-repair replay`
+  or `experiments/loop_engineer/evaluate.py`. Never call an LLM to reproduce
   a parser defect. Record commit, Python/dependency revisions and hashes.
 - **Assessor:** the frozen, externally reviewed fixture expectation is
   authoritative. Confirm same corpus fingerprint and no losses on fixed or
@@ -34,7 +34,7 @@ assessor, workflow contract, production branches, Fetchgraph runtime or
 external services. Default provisional trial budget: one defect family,
 at most two code interventions and 30 minutes per arm. No network requests
 or inference during evaluation. If no qualified raw dump is available,
-stop at readiness and report \`NOT_RUN\` rather than inventing an input.
+stop at readiness and report `NOT_RUN` rather than inventing an input.
 
 Report status, actual case IDs, frozen fingerprint, code SHAs, the first
 failing boundary, tests, intervention count, time/usage, and exact
