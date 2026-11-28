@@ -12,6 +12,39 @@ class ProposalJsonTests(unittest.TestCase):
         self.assertEqual(parse_proposal_json(raw), expected)
         self.assertEqual(parse_proposal_json(raw + "\nГотово."), expected)
 
+    def test_safe_decodes_a_single_labeled_json_fence(self):
+        import json
+
+        expected = {"text": 'строка ``` "a" [', "nested": [{"value": 3}]}
+        body = json.dumps(expected, ensure_ascii=False)
+        for heading, end_of_line in (("Response data", "\n"), ("Ответ модели", "\r\n")):
+            raw = end_of_line.join((f"{heading}:", "  ```JSON ", body, "  ``` "))
+            with self.subTest(heading=heading):
+                result = parse_json(raw)
+                self.assertEqual(result.value, expected)
+                self.assertTrue(result.repaired)
+                self.assertEqual(result.strategy, "safe")
+                with self.assertRaises(json.JSONDecodeError):
+                    parse_json(raw, policy="strict")
+
+    def test_safe_rejects_labeled_fences_without_one_strict_object(self):
+        fence = '```json\n{"value": 1}\n```'
+        for raw in (
+            f"Response data:\n{fence}\n{fence}",
+            f"Response data:\n{fence}\nTruncated output",
+            f'{{"value": 2}}\nResponse data:\n{fence}',
+            f"true:\n{fence}",
+            'Response data:\n{"value": 1}',
+            'Response data:\n```json\n{"value": 1,}\n```',
+            'Response data:\n```json\n{"value": 1, "value": 2}\n```',
+            'Response data:\n```json\n{"value": NaN}\n```',
+            'Response data:\n```json\n{"value": 1e400}\n```',
+            'Response data:\n```json\n[{"value": 1}]\n```',
+        ):
+            with self.subTest(raw=raw), self.assertRaises(ValueError) as raised:
+                parse_proposal_json(raw)
+            self.assertIs(type(raised.exception), ValueError)
+
     def test_comma_repair(self):
         self.assertEqual(parse_proposal_json('{"a":1,"b":[2,3,],}'), {"a":1,"b":[2,3]})
         self.assertEqual(parse_proposal_json('{,"a":1}'), {"a": 1})
