@@ -120,6 +120,75 @@ Fetchgraph integration tests have been checked.
 two distinct non-progressing interventions; budget exhausted; or all gates
 satisfied. Missing real evidence yields `NOT_RUN`, never a fabricated success.
 
+## Required private v2 regression profile
+
+Install the project from the checkout, then explicitly supply the local
+directory containing the private `fixed/` bucket:
+
+```sh
+python experiments/loop_engineer/evaluate.py verify-private-v2 \
+  --corpus "$PRIVATE_CORPUS"
+```
+
+The profile requires exactly 19 fixed fixtures and the pinned v2 fingerprint
+`37fca2ac2d3b93e304dc722e98fae496372d8fecae61d33f98ae474881ac874f`.
+It uses the same verification runner as `llm-repair verify`. The summary
+reports how many files were loaded and checked. The runner checks each
+fixture's bytes against the validated inventory before replaying it. A missing
+directory, missing file, changed fingerprint or failed expectation exits
+nonzero. Public CI runs the ordinary pytest suite with synthetic coverage.
+Keep both private corpora and their evidence outside Git.
+
+## Verify and record evidence
+
+Bind native verification receipts to the key
+`(code_tree_sha, corpus_fingerprint, environment_digest, verification_command)`.
+Record the exact command and arguments, the relevant runtime/dependency and
+configuration digest, and the actual exit status and coverage. Record whether
+a check has no private corpus. Changes in external sources used by the check
+belong in the environment digest. A tree match requires a clean tested
+checkout or a recorded staged tree with no extra effective changes.
+
+| Scenario | Operator action |
+| --- | --- |
+| Confirmed PASS, complete matching key and coverage | Reuse the receipt and link it from the current run. |
+| Any changed key field or new proof requirement | Run the affected native check. |
+| Missing, unconfirmed or incomplete receipt | Leave the gate pending until the check produces evidence. |
+| Commit created from an already assessed tree | Confirm the new commit's tree and record the mapping to the receipt. Rerun a check if it depends on commit identity or the gate calls for fresh execution. |
+
+A full library pytest run already covers its unit-test subsets. Schedule a
+focused run when it isolates an active failure or produces distinct evidence.
+The private profile and offline host integration exercises cover different
+inputs. For a frozen-corpus evaluation, a post-commit rerun used solely to
+change the SHA stamp can be replaced by a tree-identity receipt when tree
+identity satisfies the gate.
+
+### Run report
+
+Record this summary alongside the native receipts for each completed run.
+Use `NOT_MEASURED` for unavailable values.
+
+| Field | Record |
+| --- | --- |
+| Run identity | Run ID, start/end commit SHAs and evaluated tree SHA |
+| Decision | Operator outcome, independent Assessor verdict and evidence links |
+| Corpus | Fingerprint, files actually checked, positive and negative results |
+| Attempts | Number of distinct patches and results |
+| Model usage per role | Calls with recorded usage, input tokens, cached input tokens and output tokens |
+| Time per role | Elapsed time, active time and wait time where measured |
+| Verification | Executed and reused checks, required and redundant repeats, with reasons |
+| Interventions | User decisions and permissions, plus any operator recovery actions |
+| Final status | `FIRST_SUCCESS`, `BLOCKED`, `ORACLE_REQUIRED`, or the applicable stage result |
+
+Use native Codex telemetry for the run's time window and participating
+threads. Count new usage records, deduplicate repeated cumulative counters,
+and report cache tokens as a subset of input tokens. Use task timestamps for
+elapsed role time and separate active and waiting time only when actually
+measured. Link to sanitized receipts and aggregated fields. Keep transcripts,
+private fixtures, raw diagnostic output and credentials outside publication.
+Use `NOT_MEASURED` for billed cost unless an authoritative billing record
+covers the run.
+
 ## Safety and ownership
 
 The loop may edit only the isolated candidate worktree's library code/tests.
