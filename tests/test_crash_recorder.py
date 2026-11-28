@@ -23,6 +23,21 @@ def test_disabled_by_default(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_macos_default_directory_captures_terminal_failure(tmp_path):
+    directory = tmp_path / "Library" / "Application Support" / "LLM-output-repair" / "dumps"
+    with patch.object(Path, "home", return_value=tmp_path), patch(
+        "llm_output_repair.crash_recorder.sys"
+    ) as platform:
+        platform.platform = "darwin"
+        recorder = CrashRecorder()
+
+    assert recorder.directory == directory
+    with pytest.raises(ValueError):
+        parse_json(BAD_JSON, recorder=recorder)
+    [dump] = directory.glob("*.json")
+    assert json.loads(dump.read_text("utf-8"))["input"]["raw"] == BAD_JSON
+
+
 def test_dump_has_exact_raw_options_and_no_exception_message(tmp_path):
     recorder = CrashRecorder(tmp_path / "private", source={"project": "fetchgraph"})
     with pytest.raises(ValueError):

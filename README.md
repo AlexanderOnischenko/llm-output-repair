@@ -75,14 +75,13 @@ Crash capture is **disabled by default**: importing the package or calling a
 parser without a recorder creates no dump directory, performs no upload, and
 sends no telemetry.
 
-To retain *final* failures of the public parsing functions, explicitly supply a
-private directory and a recorder:
+To retain *final* failures in the shared dump directory, pass a recorder to the
+public parsing functions:
 
 ~~~python
 from llm_output_repair import CrashRecorder, parse_json, repair_json, repair_yaml
 
 recorder = CrashRecorder(
-    directory="/private/path/llm-repair-dumps",
     capture="failed",
     source={"project": "fetchgraph"},
     max_dump_bytes=1_000_000,
@@ -99,9 +98,8 @@ If the call fails after repair attempts, one JSON dump is saved with
 `schema_version=1`, the *exact original input*, operation and parse options,
 library version, UTC timestamp, exception **type** (not exception text or
 traceback) and optional caller-supplied `source` labels.
-Repeated identical inputs/operations/options are deduplicated. Storage is
-local-only; there is no automatic publishing, upload, anonymization, replay
-CLI or generated regression test yet (later phases).
+Repeated identical inputs/operations/options are deduplicated. The recorder
+stores dumps locally for review and replay.
 
 **Security:** The raw LLM output may contain secrets or personal information.
 Use a location *outside Git*, keep it under your control, and never upload
@@ -126,20 +124,25 @@ to a regression fixture only after reviewing and explicitly supplying an
 expectation. These commands are local-only and never invoke an LLM.
 
 ~~~bash
+# Shared crash dump directory on macOS.
+DUMPS_DIR="$HOME/Library/Application Support/LLM-output-repair/dumps"
+DUMP="$DUMPS_DIR/<sha256>.json"
+
 # Reproduce the exact saved parser call.
-llm-repair replay /private/dumps/<sha256>.json
+llm-repair replay "$DUMP"
 
 # Prepare the expected JSON result separately from the failed output.
-printf '%s\n' '{"a":1}' > /private/expected.json
+EXPECTED="$(mktemp)"
+printf '%s\n' '{"a":1}' > "$EXPECTED"
 
 # Create an actionable failing case.
-llm-repair promote /private/dumps/<sha256>.json \
+llm-repair promote "$DUMP" \
   --corpus ./tests/regression_corpus \
   --bucket known_bad \
-  --expect-json-file /private/expected.json
+  --expect-json-file "$EXPECTED"
 
 # Or specify an intentional rejection:
-llm-repair promote /private/dumps/<sha256>.json \
+llm-repair promote "$DUMP" \
   --corpus ./tests/regression_corpus \
   --bucket fixed \
   --expect-error ValueError
